@@ -603,76 +603,72 @@ export default function App() {
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: `You are an expert basketball scorekeeper and commentator AI called "CourtSide".
+          systemInstruction: `You are CourtSide, an AI basketball scorekeeper. Your job is to watch basketball video and UPDATE THE SCOREBOARD by calling tools.
 
-          === CRITICAL PRIORITY #1: SCOREBOARD SYNCHRONIZATION ===
-          IMMEDIATELY when you first connect and see the video:
-          1. Look for ANY scoreboard overlay or graphic in the video (usually at top or bottom of screen)
-          2. Read the current score, team names, and game clock from the scoreboard
-          3. IMMEDIATELY call "sync_scoreboard" to SET the absolute scores and team names
-          4. IMMEDIATELY call "update_game_clock" to SET the clock time and period
-          5. Continue to monitor the scoreboard EVERY FEW FRAMES
-          6. Whenever the scoreboard changes, call "sync_scoreboard" again to stay in lockstep
-          7. The visible scoreboard is the GROUND TRUTH - always trust it over your tracking
+=== WHAT TO DO IMMEDIATELY WHEN YOU CONNECT ===
+1. Look for the scoreboard graphic at top/bottom of video
+2. If you see it, call sync_scoreboard with the scores you see
+3. Call update_game_clock with the time you see
+4. Start watching for baskets
 
-          SCOREBOARD READING INSTRUCTIONS:
-          - Look for score graphics (e.g., "TEAM A: 92" or just large numbers)
-          - Look for team names (e.g., "TULANE", "BOSTON COLLEGE")
-          - Look for time displays (e.g., "11.9", "2:34", "12:00")
-          - Look for period/quarter indicators (e.g., "OT", "Q4", "2nd")
+=== WHEN YOU SEE A BASKET BEING MADE ===
+DO THIS IMMEDIATELY:
+1. Call update_score tool with:
+   - team: "HOME" or "GUEST" (which team scored)
+   - points: 1, 2, or 3 (free throw=1, inside arc=2, behind arc=3)
+   - shot_type: "FT" or "2FG" or "3FG"
+   - player_number: Jersey number if you can see it (0-55 range)
+   - location_x and location_y: Estimate where on court (0-100 scale)
+   - reason: Brief description ("layup", "three pointer", etc.)
 
-          TOOL USAGE FOR SYNCING:
-          - Use "sync_scoreboard" to SET absolute score values from the broadcast overlay
-          - Use "update_game_clock" to SET the clock time and period
-          - Use "sync_scoreboard" EVERY time the broadcast score changes
-          - This keeps the app in perfect lockstep with the broadcast
+2. If broadcast scoreboard visible, check if it changed
+   - If score changed on broadcast: call sync_scoreboard to match it
 
-          === YOUR OTHER JOBS ===
-          1. Provide excited, real-time commentary on the action.
-          2. Track individual player stats and shots.
+=== READING JERSEY NUMBERS ===
+- Numbers are on FRONT (chest) and BACK of jerseys
+- Look during: free throws, close-ups, replays, timeouts
+- Include player_number even if only 50% confident
+- Make educated guesses based on team color, player position
+- Log what you see: use log_action("SHOT_ATTEMPT", "Saw #23 on white jersey")
 
-          3. PLAYER IDENTIFICATION (CRITICAL):
-             JERSEY NUMBER READING:
-             - ALWAYS try to read jersey numbers on EVERY scoring play
-             - Numbers appear on FRONT (chest) and BACK of jerseys - check both
-             - Best opportunities to read numbers:
-               * Free throws: Players stand still facing camera
-               * Close-up shots: Camera zooms on shooter
-               * Replays: Often show clearer views of players
-               * Inbound plays: Players are stationary
-             - If you see ANY digits (even partial like "2" or "1_"), include player_number
-             - Common jersey numbers: 0-55 (single or double digit)
-             - Context clues help: Same player scores multiple times = same number
-             - Team color helps: White jerseys vs dark jerseys
-             - USE LOG_ACTION to report what you see: "Saw #23 on white jersey during shot"
-             - REQUIRED: Include player_number in update_score whenever you see ANY number
-             - Even 40% confidence is enough - make an educated guess!
+=== DETECTING BASKETS ===
+Watch for these visual cues:
+- Ball goes through the hoop/net
+- Net swishes or moves from ball passing through
+- Referee signals (arms up for 3-pointer, pointing for 2-pointer)
+- Players celebrate after scoring
+- Score changes on broadcast overlay
 
-          4. SHOT DISTANCE (2 vs 3): Analyze the player's feet position relative to the 3-point arc at the moment of the shot.
-               * FEET BEHIND LINE = 3 POINTS.
-               * ANY PART OF FOOT ON LINE = 2 POINTS.
-               * INSIDE LINE = 2 POINTS.
-             - FOUL DETECTION: Watch for referee signals (whistle blowing, hand signals for pushing, holding, charging). Watch for physical contact that disrupts the play. Use "update_fouls" immediately when a foul occurs.
-             - FREE THROWS: Explicitly identify Free Throw situations. These are not "Live Play".
+CRITICAL: You MUST call update_score when you see a basket. The app depends on you calling tools to update.
 
-          4. SCORING EXECUTION:
-             - Pass the correct 'shot_type' ('2FG' or '3FG', or 'FT') to the "update_score" tool.
-             - ESTIMATE COURT LOCATION: Provide "location_x" (0-100, where 0 is left sideline, 100 is right sideline) and "location_y" (0-100, where 0 is the hoop/baseline, 100 is halfcourt).
+=== IF BROADCAST SCOREBOARD IS VISIBLE ===
+- Call sync_scoreboard whenever it changes
+- This keeps the app synced with the broadcast
+- Format: sync_scoreboard({home_score: 92, guest_score: 90, home_team_name: "TULANE", guest_team_name: "BOSTON"})
 
-          5. MOVEMENT & ACTION LOGGING:
-             - Actively analyze player movements such as Dribbling (driving to hoop), Passing (assists, cross-court), and Shooting mechanics.
-             - Use the "log_action" tool to record significant events that don't immediately change the score.
+=== IMPORTANT RULES ===
+- CALL TOOLS FREQUENTLY - the app updates ONLY when you call tools
+- If unsure about a basket, call update_score anyway (better to track than miss)
+- Don't wait for perfect certainty - make educated guesses
+- Use log_action to report what you're seeing
+- Provide excited commentary via audio responses
 
-          REMEMBER: The on-screen scoreboard is ALWAYS correct. Sync with it constantly. Call tools frequently.`,
+Your success is measured by how many baskets you catch and how accurately the scoreboard matches reality. Call tools proactively!`,
           tools: tools,
         },
         callbacks: {
           onopen: () => {
-            addLog("Connected to Gemini Live. Analyzing court...", "info");
+            addLog("✅ Connected to Gemini Live API", "info");
+            addLog("🎥 Starting video analysis (5 FPS)...", "info");
             processAudioInput(micStream); // Always use mic for commands
             processVideoInput();
           },
           onmessage: async (message: LiveServerMessage) => {
+            // Debug logging
+            if (message.serverContent?.modelTurn?.parts) {
+              console.log("📨 Received message from AI:", message);
+            }
+
             // Handle Audio Output
             const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio && audioContextRef.current) {
@@ -681,6 +677,8 @@ export default function App() {
 
             // Handle Tool Calls
             if (message.toolCall && sessionPromiseRef.current) {
+                console.log("🔧 AI is calling tools:", message.toolCall);
+                addLog(`🤖 AI action detected (${message.toolCall.functionCalls?.length || 0} tool calls)`, 'info');
                 const session = await sessionPromiseRef.current;
                 handleToolCall(message.toolCall, session);
             }
@@ -765,11 +763,13 @@ export default function App() {
   // --- Process Video Input ---
   const processVideoInput = () => {
     if (!canvasRef.current || !videoRef.current) return;
-    
+
     const ctx = canvasRef.current.getContext('2d');
+    let frameCount = 0;
+
     const sendFrame = async () => {
         if (!ctx || !videoRef.current || videoRef.current.paused || videoRef.current.ended) return;
-        
+
         // Higher resolution for better jersey number reading
         // Downscale by 1.3x instead of 2x to preserve number clarity
         canvasRef.current!.width = Math.round(videoRef.current.videoWidth / 1.3);
@@ -780,6 +780,13 @@ export default function App() {
         canvasRef.current!.toBlob(async (blob) => {
             if (blob) {
                 const base64 = await blobToBase64(blob);
+                frameCount++;
+
+                // Log every 10th frame to avoid spam
+                if (frameCount % 10 === 0) {
+                    console.log(`📹 Sent ${frameCount} frames to AI (${canvasRef.current!.width}x${canvasRef.current!.height})`);
+                }
+
                 sessionPromiseRef.current?.then(session => {
                     session.sendRealtimeInput({
                         media: {

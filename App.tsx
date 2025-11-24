@@ -643,6 +643,9 @@ export default function App() {
       }
 
       // Connect to Gemini Live
+      console.log("🔌 Connecting to Gemini Live API...");
+      console.log("🛠️ Available tools:", tools);
+
       sessionPromiseRef.current = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
@@ -732,28 +735,60 @@ The user is waiting for you to call tools. Don't disappoint them. CALL TOOLS AGG
             }
           },
           onmessage: async (message: LiveServerMessage) => {
-            // Debug logging - log ALL messages to see what AI is doing
-            console.log("📨 Received message from AI:", message);
+            // Debug logging - log EVERYTHING
+            console.log("📨 Full AI message:", JSON.stringify(message, null, 2));
 
-            // Check if AI is just talking but not calling tools
-            const textContent = message.serverContent?.modelTurn?.parts?.[0]?.text;
-            if (textContent && !message.toolCall) {
-              console.warn("⚠️ AI sent text but NO tools:", textContent);
-              addLog(`💬 AI: ${textContent.substring(0, 100)}...`, 'info');
+            // Check message type
+            if (message.setupComplete) {
+              console.log("✅ Setup complete message received");
+              addLog("✅ AI setup complete", 'info');
+            }
+
+            // Check if there's any server content
+            if (message.serverContent) {
+              console.log("📦 Server content received:", message.serverContent);
+
+              // Check for text content
+              const parts = message.serverContent.modelTurn?.parts;
+              if (parts) {
+                parts.forEach((part: any, index: number) => {
+                  if (part.text) {
+                    console.warn(`⚠️ AI sent TEXT (part ${index}):`, part.text);
+                    addLog(`💬 AI: ${part.text.substring(0, 150)}...`, 'info');
+                  }
+                  if (part.inlineData) {
+                    console.log(`🔊 AI sent AUDIO (part ${index})`);
+                  }
+                  if (part.functionCall) {
+                    console.log(`🔧 AI sent FUNCTION_CALL in part ${index}:`, part.functionCall);
+                  }
+                });
+              }
+            }
+
+            // Check for tool calls
+            if (message.toolCall) {
+                console.log("🔧 AI is calling tools:", JSON.stringify(message.toolCall, null, 2));
+                const toolNames = message.toolCall.functionCalls?.map((fc: any) => fc.name).join(', ') || 'unknown';
+                addLog(`🤖 AI action: ${toolNames}`, 'info');
+                const session = await sessionPromiseRef.current;
+                if (session) {
+                  handleToolCall(message.toolCall, session);
+                } else {
+                  console.error("❌ Session not available for tool call");
+                }
+            } else {
+              // No tool call - this is the problem
+              if (message.serverContent?.modelTurn) {
+                console.warn("⚠️⚠️⚠️ AI RESPONDED BUT DID NOT CALL ANY TOOLS ⚠️⚠️⚠️");
+                console.warn("This is the core issue - AI is watching but not acting");
+              }
             }
 
             // Handle Audio Output
             const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio && audioContextRef.current) {
                playAudioResponse(base64Audio);
-            }
-
-            // Handle Tool Calls
-            if (message.toolCall && sessionPromiseRef.current) {
-                console.log("🔧 AI is calling tools:", message.toolCall);
-                addLog(`🤖 AI action: ${message.toolCall.functionCalls?.map((fc: any) => fc.name).join(', ')}`, 'info');
-                const session = await sessionPromiseRef.current;
-                handleToolCall(message.toolCall, session);
             }
           },
           onclose: () => {

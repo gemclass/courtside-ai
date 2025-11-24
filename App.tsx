@@ -440,54 +440,97 @@ export default function App() {
         const locY = args.location_y;
         
         setGameState(prev => {
-          let updatedPlayers = prev[teamKey].players;
+          let updatedPlayers = [...prev[teamKey].players];
           let activePlayerId = prev.lastActivePlayerId;
+          let playerFound = false;
 
           if (playerNumber) {
-            updatedPlayers = updatedPlayers.map(p => {
-                if (Number(p.number) === Number(playerNumber)) {
-                    activePlayerId = p.id;
-                    let newStats = { ...p };
+            // Check if player exists
+            const existingPlayerIndex = updatedPlayers.findIndex(p => Number(p.number) === Number(playerNumber));
 
-                    // Create new shot record
-                    const newShot = {
-                        id: Math.random().toString(36).substr(2, 9),
-                        x: locX !== undefined ? locX : 50, // Default to center if unknown
-                        y: locY !== undefined ? locY : (shotType === '3FG' ? 80 : 20), // Rough guess if unknown
-                        type: shotType || (points === 3 ? '3FG' : '2FG'),
-                        made: true,
-                        timestamp: Date.now()
-                    };
-                    
-                    newStats.shots = [...(newStats.shots || []), newShot];
+            if (existingPlayerIndex >= 0) {
+              // Player exists - update their stats
+              playerFound = true;
+              const player = updatedPlayers[existingPlayerIndex];
+              activePlayerId = player.id;
+              let newStats = { ...player };
 
-                    // Update detailed stats based on shot type
-                    if (shotType === '3FG' || (!shotType && points === 3)) {
-                        newStats.fg3m += 1;
-                        newStats.fg3a += 1; // Assume make means attempt too
-                        newStats.fgm += 1;
-                        newStats.fga += 1;
-                        newStats.points += 3;
-                    } else if (shotType === '2FG' || (!shotType && points === 2)) {
-                        newStats.fgm += 1;
-                        newStats.fga += 1;
-                        newStats.points += 2;
-                    } else if (shotType === 'FT' || (!shotType && points === 1)) {
-                        newStats.ftm += 1;
-                        newStats.fta += 1;
-                        newStats.points += 1;
-                    } else {
-                        // Fallback
-                        newStats.points += points;
-                        if (points >= 2) {
-                            newStats.fgm += 1;
-                            newStats.fga += 1;
-                        }
-                    }
-                    return newStats;
-                }
-                return p;
-            });
+              // Create new shot record
+              const newShot = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  x: locX !== undefined ? locX : 50,
+                  y: locY !== undefined ? locY : (shotType === '3FG' ? 80 : 20),
+                  type: shotType || (points === 3 ? '3FG' : '2FG'),
+                  made: true,
+                  timestamp: Date.now()
+              };
+
+              newStats.shots = [...(newStats.shots || []), newShot];
+
+              // Update detailed stats based on shot type
+              if (shotType === '3FG' || (!shotType && points === 3)) {
+                  newStats.fg3m += 1;
+                  newStats.fg3a += 1;
+                  newStats.fgm += 1;
+                  newStats.fga += 1;
+                  newStats.points += 3;
+              } else if (shotType === '2FG' || (!shotType && points === 2)) {
+                  newStats.fgm += 1;
+                  newStats.fga += 1;
+                  newStats.points += 2;
+              } else if (shotType === 'FT' || (!shotType && points === 1)) {
+                  newStats.ftm += 1;
+                  newStats.fta += 1;
+                  newStats.points += 1;
+              } else {
+                  newStats.points += points;
+                  if (points >= 2) {
+                      newStats.fgm += 1;
+                      newStats.fga += 1;
+                  }
+              }
+
+              updatedPlayers[existingPlayerIndex] = newStats;
+            } else {
+              // Player doesn't exist - create new player!
+              const newPlayerId = Math.random().toString(36).substr(2, 9);
+              activePlayerId = newPlayerId;
+
+              const newShot = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  x: locX !== undefined ? locX : 50,
+                  y: locY !== undefined ? locY : (shotType === '3FG' ? 80 : 20),
+                  type: shotType || (points === 3 ? '3FG' : '2FG'),
+                  made: true,
+                  timestamp: Date.now()
+              };
+
+              const newPlayer: Player = {
+                id: newPlayerId,
+                name: `Player #${playerNumber}`,
+                number: String(playerNumber),
+                points: points,
+                fgm: (shotType !== 'FT' && points >= 2) ? 1 : 0,
+                fga: (shotType !== 'FT' && points >= 2) ? 1 : 0,
+                fg3m: (shotType === '3FG' || (!shotType && points === 3)) ? 1 : 0,
+                fg3a: (shotType === '3FG' || (!shotType && points === 3)) ? 1 : 0,
+                ftm: (shotType === 'FT' || points === 1) ? 1 : 0,
+                fta: (shotType === 'FT' || points === 1) ? 1 : 0,
+                assists: 0,
+                orb: 0,
+                drb: 0,
+                stl: 0,
+                blk: 0,
+                tov: 0,
+                fouls: 0,
+                minutes: 0,
+                isCourt: true,
+                shots: [newShot]
+              };
+
+              updatedPlayers.push(newPlayer);
+              addLog(`➕ New player detected: #${playerNumber} added to ${teamKey.toUpperCase()} roster`, 'info');
+            }
           }
 
           return {
@@ -502,7 +545,8 @@ export default function App() {
             status: GameStatus.LIVE // Score happens, assume LIVE
           };
         });
-        addLog(`${args.team} scores ${points}! (${shotType || 'Pts'}) ${args.reason}`, 'score');
+        const playerInfo = playerNumber ? ` by #${playerNumber}` : '';
+        addLog(`${args.team} scores ${points}! (${shotType || 'Pts'}) ${args.reason}${playerInfo}`, 'score');
       } else if (name === 'update_fouls') {
         const teamKey = args.team.toLowerCase() as 'home' | 'guest';
         setGameState(prev => ({
@@ -633,6 +677,8 @@ The INSTANT you see the ball go through the hoop:
 - Include player_number even if only 50% confident
 - Make educated guesses based on team color, player position
 - Log what you see: use log_action("SHOT_ATTEMPT", "Saw #23 on white jersey")
+- IMPORTANT: Players are AUTOMATICALLY ADDED to the roster when you report their jersey number
+- The more jersey numbers you report, the better the tracking!
 
 === DETECTING BASKETS ===
 Watch for these visual cues:

@@ -1,0 +1,8 @@
+{
+  "name": "CourtSide AI - Smart Scorebook",
+  "description": "Real-time basketball scorebook automated by Gemini Live Vision and Audio.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

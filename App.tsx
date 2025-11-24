@@ -139,14 +139,14 @@ const syncScoreboardTool: FunctionDeclaration = {
 
 const updateScoreTool: FunctionDeclaration = {
   name: 'update_score',
-  description: 'Update the score for a specific team when a basket is made or points are awarded. This ADDS points.',
+  description: 'Update the score for a specific team when a basket is made or points are awarded. This ADDS points. IMPORTANT: Always try to include player_number by reading jersey numbers from the video.',
   parameters: {
     type: Type.OBJECT,
     properties: {
       team: { type: Type.STRING, enum: ['HOME', 'GUEST'], description: 'The team that scored.' },
       points: { type: Type.NUMBER, description: 'Points to add (1, 2, or 3).' },
       reason: { type: Type.STRING, description: 'Short description of the play (e.g., "Three pointer from the corner").' },
-      player_number: { type: Type.NUMBER, description: 'The jersey number of the player who scored, if visible.' },
+      player_number: { type: Type.NUMBER, description: 'CRITICAL: The jersey number of the player who scored. Look at the front (chest) or back of the jersey. Include this whenever you see ANY number, even if partially visible. Common range: 0-55.' },
       shot_type: {
           type: Type.STRING,
           enum: ['2FG', '3FG', 'FT'],
@@ -631,9 +631,24 @@ export default function App() {
           1. Provide excited, real-time commentary on the action.
           2. Track individual player stats and shots.
 
-          3. VISUAL ANALYSIS GUIDELINES:
-             - IDENTIFYING PLAYERS: Look for jersey numbers on the front and back of jerseys. If numbers are not clearly visible, look for defining features (e.g., "Player with red shoes"). When calling tools, ALWAYS include the 'player_number' if you are at least 70% sure.
-             - SHOT DISTANCE (2 vs 3): Analyze the player's feet position relative to the 3-point arc at the moment of the shot.
+          3. PLAYER IDENTIFICATION (CRITICAL):
+             JERSEY NUMBER READING:
+             - ALWAYS try to read jersey numbers on EVERY scoring play
+             - Numbers appear on FRONT (chest) and BACK of jerseys - check both
+             - Best opportunities to read numbers:
+               * Free throws: Players stand still facing camera
+               * Close-up shots: Camera zooms on shooter
+               * Replays: Often show clearer views of players
+               * Inbound plays: Players are stationary
+             - If you see ANY digits (even partial like "2" or "1_"), include player_number
+             - Common jersey numbers: 0-55 (single or double digit)
+             - Context clues help: Same player scores multiple times = same number
+             - Team color helps: White jerseys vs dark jerseys
+             - USE LOG_ACTION to report what you see: "Saw #23 on white jersey during shot"
+             - REQUIRED: Include player_number in update_score whenever you see ANY number
+             - Even 40% confidence is enough - make an educated guess!
+
+          4. SHOT DISTANCE (2 vs 3): Analyze the player's feet position relative to the 3-point arc at the moment of the shot.
                * FEET BEHIND LINE = 3 POINTS.
                * ANY PART OF FOOT ON LINE = 2 POINTS.
                * INSIDE LINE = 2 POINTS.
@@ -755,11 +770,13 @@ export default function App() {
     const sendFrame = async () => {
         if (!ctx || !videoRef.current || videoRef.current.paused || videoRef.current.ended) return;
         
-        canvasRef.current!.width = videoRef.current.videoWidth / 2; // Downscale for bandwidth
-        canvasRef.current!.height = videoRef.current.videoHeight / 2;
-        
+        // Higher resolution for better jersey number reading
+        // Downscale by 1.3x instead of 2x to preserve number clarity
+        canvasRef.current!.width = Math.round(videoRef.current.videoWidth / 1.3);
+        canvasRef.current!.height = Math.round(videoRef.current.videoHeight / 1.3);
+
         ctx.drawImage(videoRef.current, 0, 0, canvasRef.current!.width, canvasRef.current!.height);
-        
+
         canvasRef.current!.toBlob(async (blob) => {
             if (blob) {
                 const base64 = await blobToBase64(blob);
@@ -772,7 +789,7 @@ export default function App() {
                     });
                 });
             }
-        }, 'image/jpeg', 0.6);
+        }, 'image/jpeg', 0.75); // Higher quality for number clarity
     };
 
     // For real-time basketball tracking, we need faster frame rate

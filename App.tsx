@@ -122,9 +122,24 @@ const INITIAL_GAME_STATE: GameState = {
 };
 
 // --- Gemini Tool Definitions ---
+const syncScoreboardTool: FunctionDeclaration = {
+  name: 'sync_scoreboard',
+  description: 'Synchronize the app scoreboard with the visible on-screen scoreboard overlay. Use this when you first connect or whenever you see the broadcast scoreboard. This SETS the absolute score values.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      home_score: { type: Type.NUMBER, description: 'The HOME team\'s current score shown on the visible scoreboard.' },
+      guest_score: { type: Type.NUMBER, description: 'The GUEST/AWAY team\'s current score shown on the visible scoreboard.' },
+      home_team_name: { type: Type.STRING, description: 'The HOME team name if visible (e.g., "TULANE").' },
+      guest_team_name: { type: Type.STRING, description: 'The GUEST team name if visible (e.g., "BOSTON COLLEGE").' },
+    },
+    required: ['home_score', 'guest_score']
+  }
+};
+
 const updateScoreTool: FunctionDeclaration = {
   name: 'update_score',
-  description: 'Update the score for a specific team when a basket is made or points are awarded.',
+  description: 'Update the score for a specific team when a basket is made or points are awarded. This ADDS points.',
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -132,18 +147,18 @@ const updateScoreTool: FunctionDeclaration = {
       points: { type: Type.NUMBER, description: 'Points to add (1, 2, or 3).' },
       reason: { type: Type.STRING, description: 'Short description of the play (e.g., "Three pointer from the corner").' },
       player_number: { type: Type.NUMBER, description: 'The jersey number of the player who scored, if visible.' },
-      shot_type: { 
-          type: Type.STRING, 
-          enum: ['2FG', '3FG', 'FT'], 
-          description: 'The type of shot: 2-point field goal (2FG), 3-point field goal (3FG), or Free Throw (FT).' 
+      shot_type: {
+          type: Type.STRING,
+          enum: ['2FG', '3FG', 'FT'],
+          description: 'The type of shot: 2-point field goal (2FG), 3-point field goal (3FG), or Free Throw (FT).'
       },
-      location_x: { 
-          type: Type.NUMBER, 
-          description: 'Shot location X coordinate (0-100). 0 is the left sideline (looking at hoop), 50 is center court, 100 is right sideline.' 
+      location_x: {
+          type: Type.NUMBER,
+          description: 'Shot location X coordinate (0-100). 0 is the left sideline (looking at hoop), 50 is center court, 100 is right sideline.'
       },
-      location_y: { 
-          type: Type.NUMBER, 
-          description: 'Shot location Y coordinate (0-100). 0 is the baseline/under hoop, 100 is the halfcourt line.' 
+      location_y: {
+          type: Type.NUMBER,
+          description: 'Shot location Y coordinate (0-100). 0 is the baseline/under hoop, 100 is the halfcourt line.'
       }
     },
     required: ['team', 'points', 'reason']
@@ -195,7 +210,7 @@ const logActionTool: FunctionDeclaration = {
   }
 };
 
-const tools = [{ functionDeclarations: [updateScoreTool, updateFoulsTool, updateClockTool, logActionTool] }];
+const tools = [{ functionDeclarations: [syncScoreboardTool, updateScoreTool, updateFoulsTool, updateClockTool, logActionTool] }];
 
 export default function App() {
   // --- State ---
@@ -386,10 +401,37 @@ export default function App() {
   const handleToolCall = useCallback((toolCall: any, session: any) => {
     toolCall.functionCalls.forEach((fc: any) => {
       const { name, args, id } = fc;
-      
+
       let result = { status: 'ok' };
-      
-      if (name === 'update_score') {
+
+      if (name === 'sync_scoreboard') {
+        // Sync with visible on-screen scoreboard
+        const homeScore = Number(args.home_score);
+        const guestScore = Number(args.guest_score);
+        const homeTeamName = args.home_team_name;
+        const guestTeamName = args.guest_team_name;
+
+        setGameState(prev => ({
+          ...prev,
+          home: {
+            ...prev.home,
+            score: homeScore,
+            name: homeTeamName || prev.home.name
+          },
+          guest: {
+            ...prev.guest,
+            score: guestScore,
+            name: guestTeamName || prev.guest.name
+          },
+          lastUpdate: new Date().toLocaleTimeString(),
+          status: GameStatus.LIVE
+        }));
+
+        const teamNames = homeTeamName && guestTeamName
+          ? `${homeTeamName} ${homeScore} - ${guestScore} ${guestTeamName}`
+          : `${homeScore} - ${guestScore}`;
+        addLog(`📊 Synced with broadcast scoreboard: ${teamNames}`, 'info');
+      } else if (name === 'update_score') {
         const teamKey = args.team.toLowerCase() as 'home' | 'guest';
         const points = Number(args.points);
         const playerNumber = args.player_number;
@@ -561,14 +603,37 @@ export default function App() {
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: `You are an expert basketball scorekeeper and commentator AI called "CourtSide". 
-          Your job is to watch the video stream of a basketball game and:
+          systemInstruction: `You are an expert basketball scorekeeper and commentator AI called "CourtSide".
+
+          === CRITICAL PRIORITY #1: SCOREBOARD SYNCHRONIZATION ===
+          IMMEDIATELY when you first connect and see the video:
+          1. Look for ANY scoreboard overlay or graphic in the video (usually at top or bottom of screen)
+          2. Read the current score, team names, and game clock from the scoreboard
+          3. IMMEDIATELY call "sync_scoreboard" to SET the absolute scores and team names
+          4. IMMEDIATELY call "update_game_clock" to SET the clock time and period
+          5. Continue to monitor the scoreboard EVERY FEW FRAMES
+          6. Whenever the scoreboard changes, call "sync_scoreboard" again to stay in lockstep
+          7. The visible scoreboard is the GROUND TRUTH - always trust it over your tracking
+
+          SCOREBOARD READING INSTRUCTIONS:
+          - Look for score graphics (e.g., "TEAM A: 92" or just large numbers)
+          - Look for team names (e.g., "TULANE", "BOSTON COLLEGE")
+          - Look for time displays (e.g., "11.9", "2:34", "12:00")
+          - Look for period/quarter indicators (e.g., "OT", "Q4", "2nd")
+
+          TOOL USAGE FOR SYNCING:
+          - Use "sync_scoreboard" to SET absolute score values from the broadcast overlay
+          - Use "update_game_clock" to SET the clock time and period
+          - Use "sync_scoreboard" EVERY time the broadcast score changes
+          - This keeps the app in perfect lockstep with the broadcast
+
+          === YOUR OTHER JOBS ===
           1. Provide excited, real-time commentary on the action.
-          2. ACCURATELY update the score using the "update_score" tool whenever a basket is made. 
-          
-          3. VISUAL ANALYSIS GUIDELINES (CRITICAL):
+          2. Track individual player stats and shots.
+
+          3. VISUAL ANALYSIS GUIDELINES:
              - IDENTIFYING PLAYERS: Look for jersey numbers on the front and back of jerseys. If numbers are not clearly visible, look for defining features (e.g., "Player with red shoes"). When calling tools, ALWAYS include the 'player_number' if you are at least 70% sure.
-             - SHOT DISTANCE (2 vs 3): Analyze the player's feet position relative to the 3-point arc at the moment of the shot. 
+             - SHOT DISTANCE (2 vs 3): Analyze the player's feet position relative to the 3-point arc at the moment of the shot.
                * FEET BEHIND LINE = 3 POINTS.
                * ANY PART OF FOOT ON LINE = 2 POINTS.
                * INSIDE LINE = 2 POINTS.
@@ -579,13 +644,11 @@ export default function App() {
              - Pass the correct 'shot_type' ('2FG' or '3FG', or 'FT') to the "update_score" tool.
              - ESTIMATE COURT LOCATION: Provide "location_x" (0-100, where 0 is left sideline, 100 is right sideline) and "location_y" (0-100, where 0 is the hoop/baseline, 100 is halfcourt).
 
-          5. GAME CLOCK: If a scoreboard or game clock is visible in the video feed, you MUST keep the app's clock and score synchronized with it using "update_game_clock" and "update_score". Prioritize the visible scoreboard data.
-
-          6. MOVEMENT & ACTION LOGGING:
+          5. MOVEMENT & ACTION LOGGING:
              - Actively analyze player movements such as Dribbling (driving to hoop), Passing (assists, cross-court), and Shooting mechanics.
              - Use the "log_action" tool to record significant events that don't immediately change the score.
-             
-          Be concise and sharp. Do not hallucinate scores. If unsure, ask for clarification.`,
+
+          REMEMBER: The on-screen scoreboard is ALWAYS correct. Sync with it constantly. Call tools frequently.`,
           tools: tools,
         },
         callbacks: {
@@ -712,11 +775,10 @@ export default function App() {
         }, 'image/jpeg', 0.6);
     };
 
-    // 2 FPS for video analysis is usually enough for general context, 
-    // but for sports maybe 5-10 is better. Live API supports high rates.
-    // Let's go with 2FPS to save bandwidth in this demo unless specific action occurs.
-    // Actually, Live API handles streaming well. Let's do 500ms (2fps).
-    frameIntervalRef.current = window.setInterval(sendFrame, 500);
+    // For real-time basketball tracking, we need faster frame rate
+    // 5 FPS gives good responsiveness for scoreboard sync and action tracking
+    // Live API handles this well and we need it to catch score changes quickly
+    frameIntervalRef.current = window.setInterval(sendFrame, 200); // 5 FPS
   };
 
   // --- Play Audio Response ---

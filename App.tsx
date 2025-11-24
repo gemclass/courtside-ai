@@ -603,16 +603,19 @@ export default function App() {
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: `You are CourtSide, an AI basketball scorekeeper. Your job is to watch basketball video and UPDATE THE SCOREBOARD by calling tools.
+          systemInstruction: `You are CourtSide, an AI basketball scorekeeper.
 
-=== WHAT TO DO IMMEDIATELY WHEN YOU CONNECT ===
-1. Look for the scoreboard graphic at top/bottom of video
-2. If you see it, call sync_scoreboard with the scores you see
-3. Call update_game_clock with the time you see
-4. Start watching for baskets
+YOUR ONLY JOB: Call tools to update the scoreboard. You are measured ONLY by how many tools you call.
+
+=== CRITICAL: START CALLING TOOLS IMMEDIATELY ===
+As SOON as you receive your FIRST video frame:
+1. Look at the screen - do you see ANY scoreboard/score numbers?
+2. YES? → IMMEDIATELY call sync_scoreboard with those numbers
+3. See a game clock time? → IMMEDIATELY call update_game_clock
+4. Don't wait, don't hesitate, CALL THE TOOLS NOW
 
 === WHEN YOU SEE A BASKET BEING MADE ===
-DO THIS IMMEDIATELY:
+The INSTANT you see the ball go through the hoop:
 1. Call update_score tool with:
    - team: "HOME" or "GUEST" (which team scored)
    - points: 1, 2, or 3 (free throw=1, inside arc=2, behind arc=3)
@@ -653,20 +656,44 @@ CRITICAL: You MUST call update_score when you see a basket. The app depends on y
 - Use log_action to report what you're seeing
 - Provide excited commentary via audio responses
 
-Your success is measured by how many baskets you catch and how accurately the scoreboard matches reality. Call tools proactively!`,
+YOUR SUCCESS METRIC: Number of tool calls you make. The app literally does NOTHING unless you call tools.
+
+REMEMBER:
+- See a scoreboard? → Call sync_scoreboard NOW
+- See a basket? → Call update_score NOW
+- See the clock? → Call update_game_clock NOW
+- When in doubt? → CALL A TOOL
+
+The user is waiting for you to call tools. Don't disappoint them. CALL TOOLS AGGRESSIVELY!`,
           tools: tools,
         },
         callbacks: {
-          onopen: () => {
+          onopen: async () => {
             addLog("✅ Connected to Gemini Live API", "info");
             addLog("🎥 Starting video analysis (5 FPS)...", "info");
             processAudioInput(micStream); // Always use mic for commands
             processVideoInput();
+
+            // Send initial prompt to prime the AI to start calling tools
+            const session = await sessionPromiseRef.current;
+            if (session) {
+              session.sendRealtimeInput({
+                message: {
+                  text: "You are now connected and receiving basketball game video. Start analyzing NOW. When you see the scoreboard, immediately call sync_scoreboard. When you see a basket being made, immediately call update_score. Call tools frequently - that's your job!"
+                }
+              });
+              addLog("🚀 Sent initial instructions to AI", "info");
+            }
           },
           onmessage: async (message: LiveServerMessage) => {
-            // Debug logging
-            if (message.serverContent?.modelTurn?.parts) {
-              console.log("📨 Received message from AI:", message);
+            // Debug logging - log ALL messages to see what AI is doing
+            console.log("📨 Received message from AI:", message);
+
+            // Check if AI is just talking but not calling tools
+            const textContent = message.serverContent?.modelTurn?.parts?.[0]?.text;
+            if (textContent && !message.toolCall) {
+              console.warn("⚠️ AI sent text but NO tools:", textContent);
+              addLog(`💬 AI: ${textContent.substring(0, 100)}...`, 'info');
             }
 
             // Handle Audio Output
@@ -678,7 +705,7 @@ Your success is measured by how many baskets you catch and how accurately the sc
             // Handle Tool Calls
             if (message.toolCall && sessionPromiseRef.current) {
                 console.log("🔧 AI is calling tools:", message.toolCall);
-                addLog(`🤖 AI action detected (${message.toolCall.functionCalls?.length || 0} tool calls)`, 'info');
+                addLog(`🤖 AI action: ${message.toolCall.functionCalls?.map((fc: any) => fc.name).join(', ')}`, 'info');
                 const session = await sessionPromiseRef.current;
                 handleToolCall(message.toolCall, session);
             }
